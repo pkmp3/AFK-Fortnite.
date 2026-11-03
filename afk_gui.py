@@ -6,14 +6,21 @@ import random
 import ctypes
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 
 import pyautogui
 import keyboard
+from PIL import Image
 
 # ---------- CAMINHOS / ARQUIVOS ----------
 BASE = os.path.dirname(os.path.abspath(sys.argv[0]))
 ARQUIVO_CFG = os.path.join(BASE, "config.json")
+PASTA_IMAGENS = os.path.join(
+    os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
+    "AFK-Fortnite", "imagens")
+
+# Quantas tentativas seguidas sem achar o lobby antes de sugerir trocar a imagem.
+FALHAS_ATE_SUGERIR = 5
 
 IMAGENS = {
     "lobby.png": "Lobby (botão Jogar)",
@@ -47,6 +54,15 @@ ROXO = "#7c5cff"
 VERDE = "#2ecc71"
 VERMELHO = "#ff5c6c"
 AMARELO = "#f5c542"
+
+
+def garantir_pasta_imagens():
+    os.makedirs(PASTA_IMAGENS, exist_ok=True)
+    return PASTA_IMAGENS
+
+
+def caminho_imagem(arq):
+    return os.path.join(PASTA_IMAGENS, arq)
 
 
 def carregar_cfg():
@@ -126,11 +142,12 @@ class App:
         self.parar_evt = threading.Event()
         self.thread = None
         self.rodando = False
+        garantir_pasta_imagens()
 
         root.title("AFK Fortnite")
         root.configure(bg=BG)
-        root.geometry("560x720")
-        root.minsize(520, 680)
+        root.geometry("600x780")
+        root.minsize(560, 740)
 
         self.overlay = Overlay(root)
         self.ov_estado, self.ov_tempo, self.ov_cor = "", "", TEXTO
@@ -206,17 +223,25 @@ class App:
 
         # Imagens
         c = self.card(self.root, "IMAGENS DE REFERÊNCIA")
+        tk.Label(c, text="Tire os prints na sua resolução e importe cada um.",
+                 bg=CARD, fg=CINZA, font=("Segoe UI", 9)).pack(anchor="w", padx=14)
         self.lbls_img = {}
         for arq, desc in IMAGENS.items():
             linha = tk.Frame(c, bg=CARD)
             linha.pack(fill="x", padx=14, pady=1)
             tk.Label(linha, text=f"{arq}  ·  {desc}", bg=CARD, fg=TEXTO,
                      font=("Segoe UI", 9)).pack(side="left")
+            self.botao(linha, "Importar", lambda a=arq: self.importar_imagem(a),
+                       BORDA, fg=TEXTO, pequeno=True).pack(side="right", padx=(8, 0))
             lbl = tk.Label(linha, text="", bg=CARD, font=("Segoe UI", 10, "bold"))
             lbl.pack(side="right")
             self.lbls_img[arq] = lbl
-        self.botao(c, "Verificar de novo", self.atualizar_imagens, BORDA,
-                   fg=TEXTO).pack(anchor="w", padx=14, pady=(8, 12))
+        botoes_img = tk.Frame(c, bg=CARD)
+        botoes_img.pack(fill="x", padx=14, pady=(8, 12))
+        self.botao(botoes_img, "Verificar de novo", self.atualizar_imagens, BORDA,
+                   fg=TEXTO).pack(side="left")
+        self.botao(botoes_img, "Abrir pasta", self.abrir_pasta_imagens, BORDA,
+                   fg=TEXTO).pack(side="left", padx=8)
 
         # Controles
         ctrl = tk.Frame(self.root, bg=BG)
@@ -236,12 +261,15 @@ class App:
                            highlightthickness=0)
         self.log.pack(fill="both", expand=True, padx=14, pady=(0, 12))
 
-    def botao(self, parent, texto, comando, cor, fg="white", grande=False):
+    def botao(self, parent, texto, comando, cor, fg="white", grande=False,
+              pequeno=False):
+        tamanho = 12 if grande else 8 if pequeno else 10
         b = tk.Button(parent, text=texto, command=comando, bg=cor, fg=fg,
                       activebackground=cor, activeforeground=fg, relief="flat",
                       bd=0, cursor="hand2",
-                      font=("Segoe UI", 12 if grande else 10, "bold"),
-                      padx=14, pady=10 if grande else 6)
+                      font=("Segoe UI", tamanho, "bold"),
+                      padx=8 if pequeno else 14,
+                      pady=10 if grande else 2 if pequeno else 6)
         return b
 
     # ---------- AÇÕES DA UI ----------
@@ -268,14 +296,61 @@ class App:
         self.root.after(0, _f)
 
     def atualizar_imagens(self):
+        garantir_pasta_imagens()
         todas_ok = True
         for arq, lbl in self.lbls_img.items():
-            if os.path.exists(os.path.join(BASE, arq)):
+            if os.path.exists(caminho_imagem(arq)):
                 lbl.config(text="✔ OK", fg=VERDE)
             else:
                 lbl.config(text="✘ faltando", fg=VERMELHO)
                 todas_ok = False
         return todas_ok
+
+    def imagens_faltando(self):
+        return [a for a in IMAGENS if not os.path.exists(caminho_imagem(a))]
+
+    def importar_imagem(self, arq):
+        origem = filedialog.askopenfilename(
+            parent=self.root,
+            title=f"Importar {arq} — {IMAGENS[arq]}",
+            filetypes=[("Imagens", "*.png *.jpg *.jpeg *.bmp"), ("Todos", "*.*")])
+        if not origem:
+            return False
+        destino = caminho_imagem(arq)
+        try:
+            garantir_pasta_imagens()
+            with Image.open(origem) as img:
+                img.convert("RGB").save(destino, "PNG")
+        except Exception as e:
+            messagebox.showerror("Erro ao importar", f"Não deu para abrir a imagem:\n{e}")
+            return False
+        self.escrever_log(f"{arq} importada para {PASTA_IMAGENS}")
+        self.atualizar_imagens()
+        return True
+
+    def pedir_imagens_faltando(self):
+        for arq in self.imagens_faltando():
+            if not messagebox.askyesno(
+                    "Imagem faltando",
+                    f"Falta a imagem \"{IMAGENS[arq]}\" ({arq}).\n\n"
+                    "Tire um print desse elemento na sua resolução e importe agora?"):
+                return False
+            if not self.importar_imagem(arq):
+                return False
+        return not self.imagens_faltando()
+
+    def sugerir_reimportar(self, arq):
+        def _f():
+            self.lbls_img[arq].config(text="⚠ não reconhecida", fg=AMARELO)
+            messagebox.showwarning(
+                "Imagem não reconhecida",
+                f"A imagem \"{IMAGENS[arq]}\" ({arq}) não está sendo achada na tela.\n\n"
+                "Isso costuma acontecer quando a resolução é diferente. "
+                "Pare o bot, tire um print novo e clique em Importar nessa linha.")
+        self.root.after(0, _f)
+
+    def abrir_pasta_imagens(self):
+        os.startfile(garantir_pasta_imagens())
 
     def ler_campos(self):
         try:
@@ -316,9 +391,9 @@ class App:
     def iniciar(self):
         if self.rodando:
             return
-        if not self.atualizar_imagens():
+        if not self.atualizar_imagens() and not self.pedir_imagens_faltando():
             messagebox.showwarning("Imagens faltando",
-                                   "Coloque as 4 imagens de referência na mesma pasta do programa.")
+                                   "Importe as 4 imagens de referência antes de iniciar.")
             return
         novo = self.ler_campos()
         if not novo:
@@ -373,7 +448,7 @@ class App:
     def ver(self, arq):
         try:
             return pyautogui.locateCenterOnScreen(
-                os.path.join(BASE, arq), confidence=self.cfg["confianca"])
+                caminho_imagem(arq), confidence=self.cfg["confianca"])
         except (pyautogui.ImageNotFoundException, FileNotFoundError):
             return None
 
@@ -423,6 +498,8 @@ class App:
         self.escrever_log("Rodando.")
         estado = "LOBBY"
         inicio = time.time()
+        falhas_lobby = 0
+        avisou_lobby = False
 
         while not self.parar_evt.is_set():
             decorrido = time.time() - inicio
@@ -431,6 +508,7 @@ class App:
                 self.set_estado("No lobby", ROXO)
                 self.set_tempo("")
                 if self.ver("lobby.png"):
+                    falhas_lobby = 0
                     self.escrever_log(f"Lobby detectado -> {cfg['tecla_jogar'].upper()}")
                     pyautogui.press(cfg["tecla_jogar"])
                     estado, inicio = "FILA", time.time()
@@ -440,6 +518,11 @@ class App:
                     self.escrever_log("Lobby não visível, talvez menu aberto -> Esc")
                     pyautogui.press(TECLA_MENU)
                     inicio = time.time()
+                    falhas_lobby += 1
+                    if falhas_lobby >= FALHAS_ATE_SUGERIR and not avisou_lobby:
+                        avisou_lobby = True
+                        self.escrever_log("lobby.png não reconhecida, importe um print novo")
+                        self.sugerir_reimportar("lobby.png")
                     if not self.esperar(1.5):
                         break
 
