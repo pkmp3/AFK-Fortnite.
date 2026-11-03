@@ -1,0 +1,8 @@
+{
+  "tempo_partida_min": 5.0,
+  "tecla_jogar": "p",
+  "confianca": 0.8,
+  "intervalo": 3.0,
+  "timeout_fila_min": 10.0,
+  "overlay": true
+}
