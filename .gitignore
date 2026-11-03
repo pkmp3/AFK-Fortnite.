@@ -1,0 +1,4 @@
+build/
+publish/
+*.spec
+__pycache__/
